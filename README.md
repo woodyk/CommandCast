@@ -7,7 +7,6 @@ CommandCast is a Python application that generates animated videos simulating a 
 ## Table of Contents
 
 - [Features](#features)
-- [Demo](#demo)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
