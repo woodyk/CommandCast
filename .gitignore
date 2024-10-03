@@ -125,4 +125,4 @@ Desktop.ini
 *.mp4
 
 # Ignore commands.txt
-commands.txt
+*commands.txt

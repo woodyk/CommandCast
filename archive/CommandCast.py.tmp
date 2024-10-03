@@ -5,13 +5,10 @@
 
 import subprocess
 import os
-import math
+import time
 from PIL import Image, ImageDraw, ImageFont
 import shutil
 import argparse
-import unicodedata
-import re
-import pexpect
 
 # Function to convert hex color codes to RGB tuples
 def hex_to_rgb(hex_color):
@@ -27,8 +24,8 @@ VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 
 # Configurable font sizes
-FONT_SIZE = 20
-COMMENT_FONT_SIZE = 20  # Font size for comments
+FONT_SIZE = 26
+COMMENT_FONT_SIZE = 36  # Font size for comments
 
 # Adjust line height based on font sizes
 LINE_HEIGHT = FONT_SIZE + 10
@@ -69,7 +66,7 @@ OUTPUT_DELAY = 1  # Amount of time to wait before rendering output after typing 
 # Configurable pre-simulation delay (in seconds)
 PRE_SIMULATION_DELAY = 2  # Amount of time to wait at the beginning of the video before starting the simulation
 
-# Frame rate for the video (you can change this value)
+# Frame rate for the video
 FRAME_RATE = 10  # Frames per second for the video
 
 # Using Courier New as the font, pre-installed on most systems
@@ -79,8 +76,8 @@ FONT_NAME = "Courier New"
 FRAMES_DIR = "frames"
 
 # Configurable comment card settings
-COMMENT_CARD_BG_COLOR_HEX = "#00008B"  # Dark blue background for comment cards
-COMMENT_TEXT_COLOR_HEX = "#FFFFFF"     # White text color for comments
+COMMENT_CARD_BG_COLOR_HEX = "#00008B"  # Background color for comment cards
+COMMENT_TEXT_COLOR_HEX = "#FFFFFF"     # Text color for comments
 
 # Convert comment card colors to RGB
 COMMENT_CARD_BG_COLOR = hex_to_rgb(COMMENT_CARD_BG_COLOR_HEX)
@@ -97,19 +94,6 @@ CONTENT_START_Y = HEADER_PADDING + HEADER_BUFFER  # Starting Y position for term
 CONTENT_END_Y = VIDEO_HEIGHT - FOOTER_MARGIN - FOOTER_BUFFER  # Ending Y position for terminal content
 
 VISIBLE_HEIGHT = CONTENT_END_Y - CONTENT_START_Y  # Total available height for terminal content
-
-# Typing speed configurations
-# We will map typing speed (0 to 10) to characters per second (CPS)
-MAX_CPS = 100     # Increased maximum CPS for faster typing at typing speed 10
-MIN_CPS = 1       # Minimum characters per second at typing speed 0
-
-def calculate_cps(typing_speed):
-    """Calculate characters per second based on typing speed (0 to 10)."""
-    # Ensure typing_speed is within 0 to 10
-    typing_speed = max(0, min(typing_speed, 10))
-    # Linear mapping from typing_speed to CPS
-    cps = MIN_CPS + ((MAX_CPS - MIN_CPS) * (typing_speed / 10))
-    return cps
 
 # Function to handle word-wrapping for long text inside the comment card
 def wrap_text_in_card(text, font, max_width):
@@ -144,40 +128,28 @@ def clear_frames_directory():
     os.makedirs(FRAMES_DIR)
 
 # Function to simulate typing in the terminal and capture the frames
-def simulate_typing(draw, img, text, pos, font, frame_idx, cps, fill_color=FONT_COLOR):
+def simulate_typing(draw, img, text, pos, font, frame_idx, delay=0.05, fill_color=FONT_COLOR):
     """Simulate typing the text by generating frames character by character."""
     x, y = pos
-    total_chars = len(text)
-    time_per_char = 1.0 / cps  # seconds per character
-    frame_duration = 1.0 / FRAME_RATE  # seconds per frame
+    for char in text:
+        # Use getbbox() to get character width
+        bbox = font.getbbox(char)
+        char_width = bbox[2] - bbox[0]  # Width is the difference between right and left bounds
+        draw.text((x, y), char, font=font, fill=fill_color)
+        x += char_width  # Move cursor to the right for the next character
 
-    accumulated_time = 0.0
-    char_index = 0
-
-    while char_index < total_chars:
         # Save the current state as a frame
         frame_path = os.path.join(FRAMES_DIR, f"frame_{frame_idx}.png")
         img.save(frame_path)
         frame_idx += 1
 
-        # Increment accumulated time
-        accumulated_time += frame_duration
-
-        # Render as many characters as needed based on accumulated time
-        while accumulated_time >= time_per_char and char_index < total_chars:
-            # Render the next character
-            char = text[char_index]
-            bbox = font.getbbox(char)
-            char_width = bbox[2] - bbox[0]
-            draw.text((x, y), char, font=font, fill=fill_color)
-            x += char_width
-            char_index += 1
-            accumulated_time -= time_per_char  # Subtract the time per character
+        # Simulate typing delay
+        time.sleep(delay)
 
     return frame_idx
 
 # Function to render the prompt and command separately
-def render_prompt_and_command(draw, img, prompt, prompt_color, command, pos, font, frame_idx, cps):
+def render_prompt_and_command(draw, img, prompt, prompt_color, command, pos, font, frame_idx, delay=0.05):
     """Render the prompt in one color, and type the command in another."""
     x, y = pos
     # Render the prompt (not typed, in prompt color)
@@ -190,7 +162,7 @@ def render_prompt_and_command(draw, img, prompt, prompt_color, command, pos, fon
     frame_idx += 1
 
     # Simulate typing the command in default font color
-    frame_idx = simulate_typing(draw, img, command, (x + prompt_width, y), font, frame_idx, cps)
+    frame_idx = simulate_typing(draw, img, command, (x + prompt_width, y), font, frame_idx, delay)
 
     return frame_idx
 
@@ -339,7 +311,7 @@ def add_item(visible_items, new_item, font, comment_font, img, draw, frame_idx, 
     return img, draw, frame_idx, total_visible_height
 
 # Function to render a comment with a fixed-width card and simulate typing
-def render_comment(draw, img, comment_text, comment_font, frame_idx, cps):
+def render_comment(draw, img, comment_text, comment_font, frame_idx, delay=0.05):
     """Render a comment inside a fixed-width card, then simulate typing the text."""
     x = 50  # Left margin
     padding = 20  # Padding inside the card
@@ -378,28 +350,8 @@ def render_comment(draw, img, comment_text, comment_font, frame_idx, cps):
 
     return frame_idx, comment_item
 
-# Function to sanitize output, removing non-printable characters and ANSI escape codes
-def sanitize_output(text):
-    """Remove non-printable characters and ANSI escape codes."""
-    # Remove ANSI escape codes
-    ansi_escape = re.compile(r'''
-        \x1B  # ESC
-        (?:   # 7-bit C1 Fe (except CSI)
-            [@-Z\\-_]
-        |     # or [ for CSI, followed by a control sequence
-            \[
-            [0-?]*  # Parameter bytes
-            [ -/]*  # Intermediate bytes
-            [@-~]   # Final byte
-        )
-    ''', re.VERBOSE)
-    text = ansi_escape.sub('', text)
-    # Remove control characters except for newline
-    text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch == '\n')
-    return text
-
 # Function to render terminal frames, ensuring comments and commands stay within bounds
-def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
+def render_terminal_frames(commands, font_name, frame_idx=0, delay=0.05):
     """Generate frames that simulate typing and displaying the output of commands."""
     img = Image.new('RGB', (VIDEO_WIDTH, VIDEO_HEIGHT), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(img)
@@ -410,9 +362,6 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
     # Load fonts
     font = ImageFont.truetype(font_name, FONT_SIZE)
     comment_font = ImageFont.truetype(font_name, COMMENT_FONT_SIZE)
-
-    # Calculate characters per second based on typing_speed
-    cps = calculate_cps(typing_speed)
 
     visible_items = []  # Keep track of visible items (screen buffer)
     total_visible_height = 0  # Initialize total visible height
@@ -433,23 +382,27 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
             )
 
             # Render the comment card
-            frame_idx, comment_item = render_comment(draw, img, comment_text, comment_font, frame_idx, cps)
+            frame_idx, comment_item = render_comment(draw, img, comment_text, comment_font, frame_idx, delay)
 
             if comment_item:
-                # Calculate the height required for the comment card
-                required_height = comment_item['card_height']
+                # Calculate the Y position for the comment card
+                y_position = CONTENT_START_Y + total_visible_height
 
                 # Check if the card will exceed the visible area
-                while total_visible_height + required_height > VISIBLE_HEIGHT:
+                if y_position + comment_item['card_height'] > CONTENT_END_Y:
                     # Need to scroll before rendering the comment card
-                    oldest_item = visible_items.pop(0)
-                    if oldest_item['type'] == 'line':
-                        total_visible_height -= LINE_HEIGHT
-                    elif oldest_item['type'] == 'comment_card':
-                        total_visible_height -= oldest_item['card_height']
-                    else:
-                        total_visible_height -= LINE_HEIGHT
-                    img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
+                    while total_visible_height > 0:
+                        oldest_item = visible_items.pop(0)
+                        if oldest_item['type'] == 'line':
+                            total_visible_height -= LINE_HEIGHT
+                        elif oldest_item['type'] == 'comment_card':
+                            total_visible_height -= oldest_item['card_height']
+                        else:
+                            total_visible_height -= LINE_HEIGHT
+                        img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
+                        y_position = CONTENT_START_Y + total_visible_height
+                        if y_position + comment_item['card_height'] <= CONTENT_END_Y:
+                            break
 
                 # Update y_position after scrolling
                 y_position = CONTENT_START_Y + total_visible_height
@@ -471,7 +424,7 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
                     line_text, line_color = line
                     frame_idx = simulate_typing(
                         draw, img, line_text, (50 + comment_item['padding'], y_offset),
-                        comment_font, frame_idx, cps, fill_color=line_color
+                        comment_font, frame_idx, delay, fill_color=line_color
                     )
                     y_offset += COMMENT_LINE_HEIGHT
 
@@ -489,26 +442,12 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
             # This is a command
             print(f"Running command: {command}")
 
-            # Calculate the height required for the command line
-            required_height = LINE_HEIGHT
-
-            # Check if we need to scroll before rendering the command
-            while total_visible_height + required_height > VISIBLE_HEIGHT:
-                oldest_item = visible_items.pop(0)
-                if oldest_item['type'] == 'line':
-                    total_visible_height -= LINE_HEIGHT
-                elif oldest_item['type'] == 'comment_card':
-                    total_visible_height -= oldest_item['card_height']
-                else:
-                    total_visible_height -= LINE_HEIGHT
-                img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
-
-            # Update y_position after scrolling
+            # Calculate Y position for rendering
             y_position = CONTENT_START_Y + total_visible_height
 
             # Render the prompt and command
             frame_idx = render_prompt_and_command(
-                draw, img, PROMPT_TEXT, PROMPT_COLOR, command, (50, y_position), font, frame_idx, cps
+                draw, img, PROMPT_TEXT, PROMPT_COLOR, command, (50, y_position), font, frame_idx, delay
             )
 
             # Create the command line item
@@ -525,28 +464,11 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
             # Generate frames for the output delay
             frame_idx = generate_output_delay_frames(draw, img, frame_idx)
 
-            # Sanitize the output before processing
-            sanitized_output = sanitize_output(output)
-
             # Process output lines
-            for line in sanitized_output.splitlines():
+            for line in output.splitlines():
                 print(f"Output: {line}")
 
-                # Calculate the height required for the output line
-                required_height = LINE_HEIGHT
-
-                # Check if we need to scroll before rendering the output
-                while total_visible_height + required_height > VISIBLE_HEIGHT:
-                    oldest_item = visible_items.pop(0)
-                    if oldest_item['type'] == 'line':
-                        total_visible_height -= LINE_HEIGHT
-                    elif oldest_item['type'] == 'comment_card':
-                        total_visible_height -= oldest_item['card_height']
-                    else:
-                        total_visible_height -= LINE_HEIGHT
-                    img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
-
-                # Update y_position after scrolling
+                # Calculate Y position for rendering
                 y_position = CONTENT_START_Y + total_visible_height
 
                 # Draw the output line
@@ -570,40 +492,14 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
 
     return frame_idx
 
-# Function to run commands in a persistent bash session
-def run_commands_in_persistent_shell(commands, timeout=10):
-    """Run the list of commands in a persistent shell and capture outputs after each command."""
-    print("Starting persistent bash session...")
-    # Start bash without loading .bashrc or .bash_profile
-    bash = pexpect.spawn('/bin/bash', ['--noprofile', '--norc'], encoding='utf-8', echo=False)
-    outputs = []
-    unique_marker_end = 'COMMAND_OUTPUT_END_UNIQUE'
-    # Set PS1 to empty to prevent bash from printing the prompt
-    bash.sendline('PS1=""')
-    # Disable command echo
-    bash.setecho(False)
-    # Ensure the shell is ready
-    bash.expect_exact('')  # Wait for the shell to be ready
-
-    for command in commands:
-        if command.startswith('#'):
-            outputs.append('')
-            continue
-        print(f"Executing command: {command}")
-        # Send the command and append an echo of the unique marker
-        bash.sendline(f"{command}\necho {unique_marker_end}")
-        # Read output until the unique marker is found
-        output = ''
-        try:
-            bash.expect_exact(unique_marker_end, timeout=timeout)
-            # Get the output before the marker
-            output = bash.before.strip()
-        except pexpect.exceptions.TIMEOUT:
-            print(f"Timeout while executing command: {command}")
-            output = bash.before.strip()
-        outputs.append(output)
-    bash.close()
-    return outputs
+# Function to run a Linux command and capture its output
+def run_command(command):
+    """Run the given Linux command and capture its output."""
+    # Ignore comments
+    if command.startswith('#'):
+        return ''
+    result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return result.stdout + result.stderr
 
 # Function to generate a video using ffmpeg from the frames
 def create_video_from_frames(output_file, frame_rate=10):
@@ -622,12 +518,8 @@ def create_video_from_frames(output_file, frame_rate=10):
     subprocess.run(ffmpeg_command)
 
 # Function to generate a single video for all commands in a file
-def generate_video_from_commands(commands_file, output_file="command_video.mp4", typing_speed=5, frame_rate=10):
+def generate_video_from_commands(commands_file, output_file="command_video.mp4", delay=0.05):
     """Generate a single video for all commands listed in the given file."""
-
-    global FRAME_RATE, MAX_CPS
-    FRAME_RATE = frame_rate
-    # MAX_CPS remains at 100
 
     # Clear the frames directory before starting
     clear_frames_directory()
@@ -636,16 +528,16 @@ def generate_video_from_commands(commands_file, output_file="command_video.mp4",
     with open(commands_file, 'r') as file:
         commands = [cmd.strip() for cmd in file.readlines() if cmd.strip()]
 
-    # Run commands in a persistent shell and gather outputs
-    command_outputs = list(zip(commands, run_commands_in_persistent_shell(commands)))
+    # Gather commands and their outputs
+    command_outputs = [(cmd, run_command(cmd)) for cmd in commands]
 
     # Generate frames for typing and output display
     print(f"Generating frames for all commands in {commands_file}")
-    frame_count = render_terminal_frames(command_outputs, FONT_NAME, typing_speed=typing_speed)
+    frame_count = render_terminal_frames(command_outputs, FONT_NAME, delay=delay)
 
     # Compile the frames into a video
     print(f"Compiling {frame_count} frames into a video...")
-    create_video_from_frames(output_file, frame_rate=FRAME_RATE)
+    create_video_from_frames(output_file)
 
     # Cleanup frames if needed
     shutil.rmtree(FRAMES_DIR)
@@ -657,21 +549,18 @@ if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Generate a video from terminal commands.')
     parser.add_argument('commands_file', metavar='commands_file', type=str,
-                        help='File containing commands to run')
+                        help='File containing Linux commands to run')
     parser.add_argument('-o', '--output', dest='output_file', default='command_video.mp4',
                         help='Output video file name (default: command_video.mp4)')
-    parser.add_argument('-s', '--speed', dest='typing_speed', type=float, default=2,
-                        help='Typing speed from 0 (slowest) to 10 (fastest), default is 5')
-    parser.add_argument('-f', '--framerate', dest='frame_rate', type=int, default=2,
-                        help='Frame rate of the output video, default is 10 FPS')
+    parser.add_argument('-d', '--delay', dest='typing_delay', type=float, default=0.05,
+                        help='Typing delay in seconds (default: 0.05)')
 
     args = parser.parse_args()
 
     commands_file = args.commands_file
     output_file = args.output_file
-    typing_speed = args.typing_speed
-    frame_rate = args.frame_rate
+    delay = args.typing_delay
 
     # Generate a single video for all commands
-    generate_video_from_commands(commands_file, output_file=output_file, typing_speed=typing_speed, frame_rate=frame_rate)
+    generate_video_from_commands(commands_file, output_file=output_file, delay=delay)
 

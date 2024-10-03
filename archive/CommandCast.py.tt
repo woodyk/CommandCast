@@ -9,9 +9,6 @@ import math
 from PIL import Image, ImageDraw, ImageFont
 import shutil
 import argparse
-import unicodedata
-import re
-import pexpect
 
 # Function to convert hex color codes to RGB tuples
 def hex_to_rgb(hex_color):
@@ -100,8 +97,8 @@ VISIBLE_HEIGHT = CONTENT_END_Y - CONTENT_START_Y  # Total available height for t
 
 # Typing speed configurations
 # We will map typing speed (0 to 10) to characters per second (CPS)
-MAX_CPS = 100     # Increased maximum CPS for faster typing at typing speed 10
-MIN_CPS = 1       # Minimum characters per second at typing speed 0
+MAX_CPS = FRAME_RATE     # Maximum characters per second at typing speed 10
+MIN_CPS = 1              # Minimum characters per second at typing speed 0
 
 def calculate_cps(typing_speed):
     """Calculate characters per second based on typing speed (0 to 10)."""
@@ -163,8 +160,8 @@ def simulate_typing(draw, img, text, pos, font, frame_idx, cps, fill_color=FONT_
         # Increment accumulated time
         accumulated_time += frame_duration
 
-        # Render as many characters as needed based on accumulated time
-        while accumulated_time >= time_per_char and char_index < total_chars:
+        # Check if it's time to render the next character
+        if accumulated_time >= time_per_char:
             # Render the next character
             char = text[char_index]
             bbox = font.getbbox(char)
@@ -378,26 +375,6 @@ def render_comment(draw, img, comment_text, comment_font, frame_idx, cps):
 
     return frame_idx, comment_item
 
-# Function to sanitize output, removing non-printable characters and ANSI escape codes
-def sanitize_output(text):
-    """Remove non-printable characters and ANSI escape codes."""
-    # Remove ANSI escape codes
-    ansi_escape = re.compile(r'''
-        \x1B  # ESC
-        (?:   # 7-bit C1 Fe (except CSI)
-            [@-Z\\-_]
-        |     # or [ for CSI, followed by a control sequence
-            \[
-            [0-?]*  # Parameter bytes
-            [ -/]*  # Intermediate bytes
-            [@-~]   # Final byte
-        )
-    ''', re.VERBOSE)
-    text = ansi_escape.sub('', text)
-    # Remove control characters except for newline
-    text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch == '\n')
-    return text
-
 # Function to render terminal frames, ensuring comments and commands stay within bounds
 def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
     """Generate frames that simulate typing and displaying the output of commands."""
@@ -525,11 +502,8 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
             # Generate frames for the output delay
             frame_idx = generate_output_delay_frames(draw, img, frame_idx)
 
-            # Sanitize the output before processing
-            sanitized_output = sanitize_output(output)
-
             # Process output lines
-            for line in sanitized_output.splitlines():
+            for line in output.splitlines():
                 print(f"Output: {line}")
 
                 # Calculate the height required for the output line
@@ -570,40 +544,14 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
 
     return frame_idx
 
-# Function to run commands in a persistent bash session
-def run_commands_in_persistent_shell(commands, timeout=10):
-    """Run the list of commands in a persistent shell and capture outputs after each command."""
-    print("Starting persistent bash session...")
-    # Start bash without loading .bashrc or .bash_profile
-    bash = pexpect.spawn('/bin/bash', ['--noprofile', '--norc'], encoding='utf-8', echo=False)
-    outputs = []
-    unique_marker_end = 'COMMAND_OUTPUT_END_UNIQUE'
-    # Set PS1 to empty to prevent bash from printing the prompt
-    bash.sendline('PS1=""')
-    # Disable command echo
-    bash.setecho(False)
-    # Ensure the shell is ready
-    bash.expect_exact('')  # Wait for the shell to be ready
-
-    for command in commands:
-        if command.startswith('#'):
-            outputs.append('')
-            continue
-        print(f"Executing command: {command}")
-        # Send the command and append an echo of the unique marker
-        bash.sendline(f"{command}\necho {unique_marker_end}")
-        # Read output until the unique marker is found
-        output = ''
-        try:
-            bash.expect_exact(unique_marker_end, timeout=timeout)
-            # Get the output before the marker
-            output = bash.before.strip()
-        except pexpect.exceptions.TIMEOUT:
-            print(f"Timeout while executing command: {command}")
-            output = bash.before.strip()
-        outputs.append(output)
-    bash.close()
-    return outputs
+# Function to run a Linux command and capture its output
+def run_command(command):
+    """Run the given Linux command and capture its output."""
+    # Ignore comments
+    if command.startswith('#'):
+        return ''
+    result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return result.stdout + result.stderr
 
 # Function to generate a video using ffmpeg from the frames
 def create_video_from_frames(output_file, frame_rate=10):
@@ -627,7 +575,7 @@ def generate_video_from_commands(commands_file, output_file="command_video.mp4",
 
     global FRAME_RATE, MAX_CPS
     FRAME_RATE = frame_rate
-    # MAX_CPS remains at 100
+    MAX_CPS = FRAME_RATE  # Update MAX_CPS based on frame rate
 
     # Clear the frames directory before starting
     clear_frames_directory()
@@ -636,8 +584,8 @@ def generate_video_from_commands(commands_file, output_file="command_video.mp4",
     with open(commands_file, 'r') as file:
         commands = [cmd.strip() for cmd in file.readlines() if cmd.strip()]
 
-    # Run commands in a persistent shell and gather outputs
-    command_outputs = list(zip(commands, run_commands_in_persistent_shell(commands)))
+    # Gather commands and their outputs
+    command_outputs = [(cmd, run_command(cmd)) for cmd in commands]
 
     # Generate frames for typing and output display
     print(f"Generating frames for all commands in {commands_file}")
@@ -657,12 +605,12 @@ if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Generate a video from terminal commands.')
     parser.add_argument('commands_file', metavar='commands_file', type=str,
-                        help='File containing commands to run')
+                        help='File containing Linux commands to run')
     parser.add_argument('-o', '--output', dest='output_file', default='command_video.mp4',
                         help='Output video file name (default: command_video.mp4)')
-    parser.add_argument('-s', '--speed', dest='typing_speed', type=float, default=2,
+    parser.add_argument('-s', '--speed', dest='typing_speed', type=float, default=5,
                         help='Typing speed from 0 (slowest) to 10 (fastest), default is 5')
-    parser.add_argument('-f', '--framerate', dest='frame_rate', type=int, default=2,
+    parser.add_argument('-f', '--framerate', dest='frame_rate', type=int, default=10,
                         help='Frame rate of the output video, default is 10 FPS')
 
     args = parser.parse_args()
