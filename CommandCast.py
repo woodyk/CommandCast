@@ -12,6 +12,7 @@ import argparse
 import unicodedata
 import re
 import pexpect
+import sys
 
 # Function to convert hex color codes to RGB tuples
 def hex_to_rgb(hex_color):
@@ -63,17 +64,27 @@ FOOTER_TEXT = "Powered by CommandCast"
 HEADER_FONT_SIZE = 36
 FOOTER_FONT_SIZE = 20
 
-# Configurable output delay (in seconds)
-OUTPUT_DELAY = 1  # Amount of time to wait before rendering output after typing the command
-
 # Configurable pre-simulation delay (in seconds)
 PRE_SIMULATION_DELAY = 2  # Amount of time to wait at the beginning of the video before starting the simulation
 
 # Frame rate for the video (you can change this value)
 FRAME_RATE = 10  # Frames per second for the video
 
-# Using Courier New as the font, pre-installed on most systems
-FONT_NAME = "Courier New"
+# Font settings
+DEFAULT_FONT_NAMES = ["Courier New", "Courier", "Liberation Mono", "Nimbus Mono L", "FreeMono", "DejaVu Sans Mono"]
+
+def get_available_font(font_names):
+    """Return the first available font from the list."""
+    for font_name in font_names:
+        try:
+            font = ImageFont.truetype(font_name, FONT_SIZE)
+            return font_name
+        except IOError:
+            continue
+    print("Error: None of the specified fonts are available.")
+    sys.exit(1)
+
+FONT_NAME = get_available_font(DEFAULT_FONT_NAMES)
 
 # Ensure frames directory exists
 FRAMES_DIR = "frames"
@@ -244,12 +255,12 @@ def generate_pre_simulation_frames(draw, img, frame_idx):
     return frame_idx
 
 # Function to generate frames for the output delay
-def generate_output_delay_frames(draw, img, frame_idx):
+def generate_output_delay_frames(draw, img, frame_idx, output_delay):
     """Generate static frames to account for the output delay."""
     # Calculate how many frames are needed for the output delay
-    total_frames = int(OUTPUT_DELAY * FRAME_RATE)
+    total_frames = int(output_delay * FRAME_RATE)
 
-    print(f"Generating {total_frames} output delay frames for {OUTPUT_DELAY} seconds delay...")
+    print(f"Generating {total_frames} output delay frames for {output_delay} seconds delay...")
 
     for _ in range(total_frames):
         # Save each frame
@@ -399,7 +410,7 @@ def sanitize_output(text):
     return text
 
 # Function to render terminal frames, ensuring comments and commands stay within bounds
-def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
+def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, output_delay=0):
     """Generate frames that simulate typing and displaying the output of commands."""
     img = Image.new('RGB', (VIDEO_WIDTH, VIDEO_HEIGHT), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(img)
@@ -522,55 +533,66 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5):
                 visible_items, line_item, font, comment_font, img, draw, frame_idx, total_visible_height
             )
 
-            # Generate frames for the output delay
-            frame_idx = generate_output_delay_frames(draw, img, frame_idx)
+            # Generate output delay frames as per the configurable delay
+            frame_idx = generate_output_delay_frames(draw, img, frame_idx, output_delay)
 
             # Sanitize the output before processing
             sanitized_output = sanitize_output(output)
 
             # Process output lines
-            for line in sanitized_output.splitlines():
-                print(f"Output: {line}")
+            output_lines = sanitized_output.splitlines()
+            if output_lines:
+                for idx, line in enumerate(output_lines):
+                    if line.startswith("bash-"):
+                        continue
 
-                # Calculate the height required for the output line
-                required_height = LINE_HEIGHT
+                    print(f"Output: {line}")
 
-                # Check if we need to scroll before rendering the output
-                while total_visible_height + required_height > VISIBLE_HEIGHT:
-                    oldest_item = visible_items.pop(0)
-                    if oldest_item['type'] == 'line':
-                        total_visible_height -= LINE_HEIGHT
-                    elif oldest_item['type'] == 'comment_card':
-                        total_visible_height -= oldest_item['card_height']
-                    else:
-                        total_visible_height -= LINE_HEIGHT
-                    img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
+                    # Calculate the height required for the output line
+                    required_height = LINE_HEIGHT
 
-                # Update y_position after scrolling
-                y_position = CONTENT_START_Y + total_visible_height
+                    # Check if we need to scroll before rendering the output
+                    while total_visible_height + required_height > VISIBLE_HEIGHT:
+                        oldest_item = visible_items.pop(0)
+                        if oldest_item['type'] == 'line':
+                            total_visible_height -= LINE_HEIGHT
+                        elif oldest_item['type'] == 'comment_card':
+                            total_visible_height -= oldest_item['card_height']
+                        else:
+                            total_visible_height -= LINE_HEIGHT
+                        img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
 
-                # Draw the output line
-                draw.text((50, y_position), line, font=font, fill=FONT_COLOR)
+                    # Update y_position after scrolling
+                    y_position = CONTENT_START_Y + total_visible_height
 
-                # Save the frame
+                    # Draw the output line
+                    draw.text((50, y_position), line, font=font, fill=FONT_COLOR)
+
+                    # Save the frame
+                    frame_path = os.path.join(FRAMES_DIR, f"frame_{frame_idx}.png")
+                    img.save(frame_path)
+                    frame_idx += 1
+
+                    # Create the output line item
+                    output_line_item = {
+                        'type': 'line',
+                        'segments': [(line, FONT_COLOR)]
+                    }
+
+                    # Add the output line to visible_items
+                    img, draw, frame_idx, total_visible_height = add_item(
+                        visible_items, output_line_item, font, comment_font, img, draw, frame_idx, total_visible_height
+                    )
+
+            else:
+                # If there is no output, save a frame to show the command execution
                 frame_path = os.path.join(FRAMES_DIR, f"frame_{frame_idx}.png")
                 img.save(frame_path)
                 frame_idx += 1
 
-                # Create the output line item
-                output_line_item = {
-                    'type': 'line',
-                    'segments': [(line, FONT_COLOR)]
-                }
-
-                # Add the output line to visible_items
-                img, draw, frame_idx, total_visible_height = add_item(
-                    visible_items, output_line_item, font, comment_font, img, draw, frame_idx, total_visible_height
-                )
-
     return frame_idx
 
-# Function to run commands in a persistent bash session
+# Updated run_commands_in_persistent_shell function
 def run_commands_in_persistent_shell(commands, timeout=10):
     """Run the list of commands in a persistent shell and capture outputs after each command."""
     print("Starting persistent bash session...")
@@ -578,12 +600,21 @@ def run_commands_in_persistent_shell(commands, timeout=10):
     bash = pexpect.spawn('/bin/bash', ['--noprofile', '--norc'], encoding='utf-8', echo=False)
     outputs = []
     unique_marker_end = 'COMMAND_OUTPUT_END_UNIQUE'
+    
     # Set PS1 to empty to prevent bash from printing the prompt
-    bash.sendline('PS1=""')
+    bash.sendline('unset PROMPT_COMMAND; PS1=""')
     # Disable command echo
     bash.setecho(False)
+    # Disable history expansion
+    bash.sendline('set +H')
     # Ensure the shell is ready
     bash.expect_exact('')  # Wait for the shell to be ready
+
+    # Discard any initial output
+    if bash.before:
+        bash.before = ''
+    if bash.buffer:
+        bash.buffer = ''
 
     for command in commands:
         if command.startswith('#'):
@@ -598,6 +629,12 @@ def run_commands_in_persistent_shell(commands, timeout=10):
             bash.expect_exact(unique_marker_end, timeout=timeout)
             # Get the output before the marker
             output = bash.before.strip()
+            # Remove any command echoes that might have slipped through
+            output_lines = output.splitlines()
+            # Remove any lines that match the command or are empty
+            output_lines = [line for line in output_lines if line.strip() != command.strip() and line.strip()]
+            # Reconstruct the output
+            output = '\n'.join(output_lines)
         except pexpect.exceptions.TIMEOUT:
             print(f"Timeout while executing command: {command}")
             output = bash.before.strip()
@@ -622,7 +659,7 @@ def create_video_from_frames(output_file, frame_rate=10):
     subprocess.run(ffmpeg_command)
 
 # Function to generate a single video for all commands in a file
-def generate_video_from_commands(commands_file, output_file="command_video.mp4", typing_speed=5, frame_rate=10):
+def generate_video_from_commands(commands_file, output_file="command_video.mp4", typing_speed=5, frame_rate=10, output_delay=0):
     """Generate a single video for all commands listed in the given file."""
 
     global FRAME_RATE, MAX_CPS
@@ -641,7 +678,7 @@ def generate_video_from_commands(commands_file, output_file="command_video.mp4",
 
     # Generate frames for typing and output display
     print(f"Generating frames for all commands in {commands_file}")
-    frame_count = render_terminal_frames(command_outputs, FONT_NAME, typing_speed=typing_speed)
+    frame_count = render_terminal_frames(command_outputs, FONT_NAME, typing_speed=typing_speed, output_delay=output_delay)
 
     # Compile the frames into a video
     print(f"Compiling {frame_count} frames into a video...")
@@ -660,10 +697,12 @@ if __name__ == "__main__":
                         help='File containing commands to run')
     parser.add_argument('-o', '--output', dest='output_file', default='command_video.mp4',
                         help='Output video file name (default: command_video.mp4)')
-    parser.add_argument('-s', '--speed', dest='typing_speed', type=float, default=2,
+    parser.add_argument('-s', '--speed', dest='typing_speed', type=float, default=5,
                         help='Typing speed from 0 (slowest) to 10 (fastest), default is 5')
-    parser.add_argument('-f', '--framerate', dest='frame_rate', type=int, default=2,
+    parser.add_argument('-f', '--framerate', dest='frame_rate', type=int, default=10,
                         help='Frame rate of the output video, default is 10 FPS')
+    parser.add_argument('-d', '--output-delay', dest='output_delay', type=float, default=2,
+                        help='Delay in seconds before showing command output, default is 2')
 
     args = parser.parse_args()
 
@@ -671,7 +710,8 @@ if __name__ == "__main__":
     output_file = args.output_file
     typing_speed = args.typing_speed
     frame_rate = args.frame_rate
+    output_delay = args.output_delay
 
     # Generate a single video for all commands
-    generate_video_from_commands(commands_file, output_file=output_file, typing_speed=typing_speed, frame_rate=frame_rate)
+    generate_video_from_commands(commands_file, output_file=output_file, typing_speed=typing_speed, frame_rate=frame_rate, output_delay=output_delay)
 

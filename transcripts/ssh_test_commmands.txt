@@ -1,0 +1,5 @@
+# Testing an ssh connection with commands
+ssh flint@ai.sr ls -al
+# back home
+pwd
+# done

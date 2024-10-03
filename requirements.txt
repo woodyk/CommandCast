@@ -1,1 +1,2 @@
+pexpect==4.8.0
 Pillow==10.4.0
