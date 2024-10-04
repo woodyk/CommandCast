@@ -389,9 +389,8 @@ def render_comment(draw, img, comment_text, comment_font, frame_idx, cps):
 
     return frame_idx, comment_item
 
-# Function to sanitize output, removing non-printable characters and ANSI escape codes
 def sanitize_output(text):
-    """Remove non-printable characters and ANSI escape codes."""
+    """Remove non-printable characters and ANSI escape codes, but preserve necessary formatting."""
     # Remove ANSI escape codes
     ansi_escape = re.compile(r'''
         \x1B  # ESC
@@ -405,8 +404,8 @@ def sanitize_output(text):
         )
     ''', re.VERBOSE)
     text = ansi_escape.sub('', text)
-    # Remove control characters except for newline
-    text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch == '\n')
+    # Remove control characters except for newline and tab
+    text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in ('\n', '\t'))
     return text
 
 # Function to render terminal frames, ensuring comments and commands stay within bounds
@@ -543,9 +542,7 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, out
             output_lines = sanitized_output.splitlines()
             if output_lines:
                 for idx, line in enumerate(output_lines):
-                    if line.startswith("bash-"):
-                        continue
-
+                    line = line.expandtabs()
                     print(f"Output: {line}")
 
                     # Calculate the height required for the output line
