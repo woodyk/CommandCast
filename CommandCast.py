@@ -28,8 +28,8 @@ VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 
 # Configurable font sizes
-FONT_SIZE = 20
-COMMENT_FONT_SIZE = 20  # Font size for comments
+FONT_SIZE = 24
+COMMENT_FONT_SIZE = 28  # Font size for comments
 
 # Adjust line height based on font sizes
 LINE_HEIGHT = FONT_SIZE + 10
@@ -57,12 +57,12 @@ HEADER_BG_COLOR = hex_to_rgb(HEADER_BG_COLOR_HEX)
 FOOTER_BG_COLOR = hex_to_rgb(FOOTER_BG_COLOR_HEX)
 
 # Configurable header and footer text
-HEADER_TEXT = "ByAnAdmin Command Shorts"
+HEADER_TEXT = "Command Line Shorts"
 FOOTER_TEXT = "Powered by CommandCast"
 
 # Configurable header and footer text font sizes
 HEADER_FONT_SIZE = 36
-FOOTER_FONT_SIZE = 20
+FOOTER_FONT_SIZE = 24
 
 # Configurable pre-simulation delay (in seconds)
 PRE_SIMULATION_DELAY = 2  # Amount of time to wait at the beginning of the video before starting the simulation
@@ -187,21 +187,40 @@ def simulate_typing(draw, img, text, pos, font, frame_idx, cps, fill_color=FONT_
 
     return frame_idx
 
-# Function to render the prompt and command separately
+# Function to render the prompt and command separately, with word wrapping for long commands
 def render_prompt_and_command(draw, img, prompt, prompt_color, command, pos, font, frame_idx, cps):
-    """Render the prompt in one color, and type the command in another."""
+    """Render the prompt in one color, and type the command in another, with word wrapping."""
     x, y = pos
     # Render the prompt (not typed, in prompt color)
     draw.text((x, y), prompt, font=font, fill=prompt_color)
     prompt_width = font.getbbox(prompt)[2]  # Get the width of the prompt
+
+    # Define the maximum width for the command text (the available space after the prompt)
+    max_width = VIDEO_WIDTH - 100  # Adjust this as needed for margins
+
+    # Calculate the remaining width for the command after the prompt is rendered
+    remaining_width = max_width - prompt_width
+
+    # Split and wrap the command text
+    command_lines = wrap_text_in_card(command, font, remaining_width)
 
     # Save the frame with the fully rendered prompt
     frame_path = os.path.join(FRAMES_DIR, f"frame_{frame_idx}.png")
     img.save(frame_path)
     frame_idx += 1
 
-    # Simulate typing the command in default font color
-    frame_idx = simulate_typing(draw, img, command, (x + prompt_width, y), font, frame_idx, cps)
+    # Start typing the command, wrapping lines if necessary
+    for idx, line in enumerate(command_lines):
+        if idx == 0:
+            # First line: render it next to the prompt
+            line_x = x + prompt_width
+        else:
+            # Subsequent lines: move to the start of the new line
+            y += LINE_HEIGHT
+            line_x = 50  # Align new lines to the start of the screen margin
+
+        # Simulate typing the command line
+        frame_idx = simulate_typing(draw, img, line, (line_x, y), font, frame_idx, cps)
 
     return frame_idx
 
@@ -316,39 +335,6 @@ def scroll_terminal(draw, visible_items, font, comment_font, frame_idx):
     img.save(frame_path)
     return img, draw, frame_idx + 1
 
-# Helper function to add items with scroll check
-def add_item(visible_items, new_item, font, comment_font, img, draw, frame_idx, total_visible_height):
-    """Add a new item to visible_items and handle scrolling if necessary."""
-    # Calculate the height of the new item
-    if new_item['type'] == 'line':
-        item_height = LINE_HEIGHT
-    elif new_item['type'] == 'comment_card':
-        item_height = new_item['card_height']
-    else:
-        item_height = LINE_HEIGHT  # default
-
-    # Before adding the item, check if we need to scroll
-    while total_visible_height + item_height > VISIBLE_HEIGHT:
-        # Remove the oldest item
-        oldest_item = visible_items.pop(0)
-        # Subtract its height from total_visible_height
-        if oldest_item['type'] == 'line':
-            total_visible_height -= LINE_HEIGHT
-        elif oldest_item['type'] == 'comment_card':
-            total_visible_height -= oldest_item['card_height']
-        else:
-            total_visible_height -= LINE_HEIGHT  # default
-
-        # Scroll the terminal before rendering the new item
-        img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
-
-    # Add the new item to visible_items
-    visible_items.append(new_item)
-    # Increase total_visible_height
-    total_visible_height += item_height
-
-    return img, draw, frame_idx, total_visible_height
-
 # Function to render a comment with a fixed-width card and simulate typing
 def render_comment(draw, img, comment_text, comment_font, frame_idx, cps):
     """Render a comment inside a fixed-width card, then simulate typing the text."""
@@ -408,7 +394,43 @@ def sanitize_output(text):
     text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in ('\n', '\t'))
     return text
 
-# Function to render terminal frames, ensuring comments and commands stay within bounds
+# Updated add_item function
+def add_item(visible_items, new_item, font, comment_font, img, draw, frame_idx, total_visible_height):
+    """Add a new item to visible_items and handle scrolling if necessary. Returns updated variables and y_position."""
+    # Calculate the height of the new item
+    if new_item['type'] == 'line':
+        item_height = LINE_HEIGHT
+    elif new_item['type'] == 'comment_card':
+        item_height = new_item['card_height']
+    else:
+        item_height = LINE_HEIGHT  # default
+
+    # Before adding the item, check if we need to scroll
+    while total_visible_height + item_height > VISIBLE_HEIGHT:
+        # Remove the oldest item
+        oldest_item = visible_items.pop(0)
+        # Subtract its height from total_visible_height
+        if oldest_item['type'] == 'line':
+            total_visible_height -= LINE_HEIGHT
+        elif oldest_item['type'] == 'comment_card':
+            total_visible_height -= oldest_item['card_height']
+        else:
+            total_visible_height -= LINE_HEIGHT  # default
+
+        # Scroll the terminal before rendering the new item
+        img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
+
+    # Calculate y_position where the new item should be rendered
+    y_position = CONTENT_START_Y + total_visible_height
+
+    # Add the new item to visible_items
+    visible_items.append(new_item)
+    # Increase total_visible_height
+    total_visible_height += item_height
+
+    return img, draw, frame_idx, total_visible_height, y_position
+
+# Updated render_terminal_frames function
 def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, output_delay=0):
     """Generate frames that simulate typing and displaying the output of commands."""
     img = Image.new('RGB', (VIDEO_WIDTH, VIDEO_HEIGHT), BACKGROUND_COLOR)
@@ -438,7 +460,7 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, out
 
             # Add blank line before the comment
             blank_line_item = {'type': 'line', 'segments': [("", FONT_COLOR)]}
-            img, draw, frame_idx, total_visible_height = add_item(
+            img, draw, frame_idx, total_visible_height, _ = add_item(
                 visible_items, blank_line_item, font, comment_font, img, draw, frame_idx, total_visible_height
             )
 
@@ -446,23 +468,10 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, out
             frame_idx, comment_item = render_comment(draw, img, comment_text, comment_font, frame_idx, cps)
 
             if comment_item:
-                # Calculate the height required for the comment card
-                required_height = comment_item['card_height']
-
-                # Check if the card will exceed the visible area
-                while total_visible_height + required_height > VISIBLE_HEIGHT:
-                    # Need to scroll before rendering the comment card
-                    oldest_item = visible_items.pop(0)
-                    if oldest_item['type'] == 'line':
-                        total_visible_height -= LINE_HEIGHT
-                    elif oldest_item['type'] == 'comment_card':
-                        total_visible_height -= oldest_item['card_height']
-                    else:
-                        total_visible_height -= LINE_HEIGHT
-                    img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
-
-                # Update y_position after scrolling
-                y_position = CONTENT_START_Y + total_visible_height
+                # Add the comment card to visible_items and get y_position
+                img, draw, frame_idx, total_visible_height, y_position = add_item(
+                    visible_items, comment_item, font, comment_font, img, draw, frame_idx, total_visible_height
+                )
 
                 # Draw the comment card background
                 draw.rounded_rectangle(
@@ -485,52 +494,98 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, out
                     )
                     y_offset += COMMENT_LINE_HEIGHT
 
-                # Add the comment card to visible_items and update total_visible_height
-                img, draw, frame_idx, total_visible_height = add_item(
-                    visible_items, comment_item, font, comment_font, img, draw, frame_idx, total_visible_height
-                )
+                # Generate output delay frames as per the configurable delay
+                frame_idx = generate_output_delay_frames(draw, img, frame_idx, output_delay)
 
             # Add blank line after the comment
-            img, draw, frame_idx, total_visible_height = add_item(
+            img, draw, frame_idx, total_visible_height, _ = add_item(
                 visible_items, blank_line_item, font, comment_font, img, draw, frame_idx, total_visible_height
             )
 
-        else:
-            # This is a command
-            print(f"Running command: {command}")
+        # Check for clear or reset command
+        elif command in ['clear', 'reset']:
+            print(f"Executing command: {command}")
 
-            # Calculate the height required for the command line
-            required_height = LINE_HEIGHT
-
-            # Check if we need to scroll before rendering the command
-            while total_visible_height + required_height > VISIBLE_HEIGHT:
-                oldest_item = visible_items.pop(0)
-                if oldest_item['type'] == 'line':
-                    total_visible_height -= LINE_HEIGHT
-                elif oldest_item['type'] == 'comment_card':
-                    total_visible_height -= oldest_item['card_height']
-                else:
-                    total_visible_height -= LINE_HEIGHT
-                img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
-
-            # Update y_position after scrolling
-            y_position = CONTENT_START_Y + total_visible_height
-
-            # Render the prompt and command
-            frame_idx = render_prompt_and_command(
-                draw, img, PROMPT_TEXT, PROMPT_COLOR, command, (50, y_position), font, frame_idx, cps
-            )
-
-            # Create the command line item
+            # Handle the clear or reset command
+            # Simulate typing of the command first
+            # Create the line item with prompt and command
             line_item = {
                 'type': 'line',
                 'segments': [(PROMPT_TEXT, PROMPT_COLOR), (command, FONT_COLOR)]
             }
 
-            # Add the command line to visible_items
-            img, draw, frame_idx, total_visible_height = add_item(
+            # Add the line item using add_item
+            img, draw, frame_idx, total_visible_height, y_position = add_item(
                 visible_items, line_item, font, comment_font, img, draw, frame_idx, total_visible_height
             )
+
+            # Render the prompt
+            draw.text((50, y_position), PROMPT_TEXT, font=font, fill=PROMPT_COLOR)
+
+            # Simulate typing of the command after the prompt
+            x_offset = 50 + font.getbbox(PROMPT_TEXT)[2]
+            frame_idx = simulate_typing(draw, img, command, (x_offset, y_position), font, frame_idx, cps)
+
+            # Generate output delay frames as per the configurable delay
+            frame_idx = generate_output_delay_frames(draw, img, frame_idx, output_delay)
+
+            # Clear the visible items (this mimics clearing the terminal screen)
+            visible_items.clear()
+            total_visible_height = 0
+
+            # Redraw the empty terminal between header and footer
+            img = Image.new('RGB', (VIDEO_WIDTH, VIDEO_HEIGHT), BACKGROUND_COLOR)
+            draw = ImageDraw.Draw(img)
+            render_header_footer(draw)
+
+            # Save the cleared terminal frame
+            frame_path = os.path.join(FRAMES_DIR, f"frame_{frame_idx}.png")
+            img.save(frame_path)
+            frame_idx += 1
+
+        else:
+            # This is a normal command
+            print(f"Running command: {command}")
+
+            # Word-wrap the command text
+            prompt_width = font.getbbox(PROMPT_TEXT)[2]
+            max_width = VIDEO_WIDTH - 100  # Set a padding around the text area
+            remaining_width = max_width - prompt_width
+
+            # Split and wrap the command text
+            command_lines = wrap_text_in_card(command, font, remaining_width)
+
+            # Handle the first line
+            first_line_command = command_lines[0] if command_lines else ''
+            line_item = {
+                'type': 'line',
+                'segments': [(PROMPT_TEXT, PROMPT_COLOR), (first_line_command, FONT_COLOR)]
+            }
+            # Add the line item using add_item
+            img, draw, frame_idx, total_visible_height, y_position = add_item(
+                visible_items, line_item, font, comment_font, img, draw, frame_idx, total_visible_height
+            )
+
+            # Render the prompt
+            draw.text((50, y_position), PROMPT_TEXT, font=font, fill=PROMPT_COLOR)
+
+            # Simulate typing of the first line of command after the prompt
+            x_offset = 50 + prompt_width
+            frame_idx = simulate_typing(draw, img, first_line_command, (x_offset, y_position), font, frame_idx, cps)
+
+            # Handle subsequent lines of the command
+            for line in command_lines[1:]:
+                # Create a line item for each subsequent line
+                line_item = {
+                    'type': 'line',
+                    'segments': [(line, FONT_COLOR)]
+                }
+                # Add the line item using add_item
+                img, draw, frame_idx, total_visible_height, y_position = add_item(
+                    visible_items, line_item, font, comment_font, img, draw, frame_idx, total_visible_height
+                )
+                # Simulate typing of the line starting at x = 50
+                frame_idx = simulate_typing(draw, img, line, (50, y_position), font, frame_idx, cps)
 
             # Generate output delay frames as per the configurable delay
             frame_idx = generate_output_delay_frames(draw, img, frame_idx, output_delay)
@@ -541,45 +596,28 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, out
             # Process output lines
             output_lines = sanitized_output.splitlines()
             if output_lines:
-                for idx, line in enumerate(output_lines):
+                for line in output_lines:
                     line = line.expandtabs()
                     print(f"Output: {line}")
 
-                    # Calculate the height required for the output line
-                    required_height = LINE_HEIGHT
+                    # Create output line item
+                    line_item = {
+                        'type': 'line',
+                        'segments': [(line, FONT_COLOR)]
+                    }
 
-                    # Check if we need to scroll before rendering the output
-                    while total_visible_height + required_height > VISIBLE_HEIGHT:
-                        oldest_item = visible_items.pop(0)
-                        if oldest_item['type'] == 'line':
-                            total_visible_height -= LINE_HEIGHT
-                        elif oldest_item['type'] == 'comment_card':
-                            total_visible_height -= oldest_item['card_height']
-                        else:
-                            total_visible_height -= LINE_HEIGHT
-                        img, draw, frame_idx = scroll_terminal(draw, visible_items, font, comment_font, frame_idx)
+                    # Add the output line item using add_item
+                    img, draw, frame_idx, total_visible_height, y_position = add_item(
+                        visible_items, line_item, font, comment_font, img, draw, frame_idx, total_visible_height
+                    )
 
-                    # Update y_position after scrolling
-                    y_position = CONTENT_START_Y + total_visible_height
-
-                    # Draw the output line
+                    # Render the line
                     draw.text((50, y_position), line, font=font, fill=FONT_COLOR)
 
                     # Save the frame
                     frame_path = os.path.join(FRAMES_DIR, f"frame_{frame_idx}.png")
                     img.save(frame_path)
                     frame_idx += 1
-
-                    # Create the output line item
-                    output_line_item = {
-                        'type': 'line',
-                        'segments': [(line, FONT_COLOR)]
-                    }
-
-                    # Add the output line to visible_items
-                    img, draw, frame_idx, total_visible_height = add_item(
-                        visible_items, output_line_item, font, comment_font, img, draw, frame_idx, total_visible_height
-                    )
 
             else:
                 # If there is no output, save a frame to show the command execution
