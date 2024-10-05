@@ -8,8 +8,8 @@ import sys
 
 def execute_commands(filename):
     with open(filename, 'r') as f:
-        # Read all lines including comments and special lines starting with "//"
-        lines = [line.strip() for line in f if line.strip()]
+        # Read all lines, including comments starting with '#'
+        lines = [line.rstrip('\n') for line in f if line.strip()]
 
     executed_commands = []
 
@@ -37,11 +37,11 @@ def execute_commands(filename):
     thread.start()
 
     for line in lines:
-        if line.startswith('//'):
+        if line.startswith('#'):
             # It's a comment for rendering in an HTML card, not a command
-            comment = line[2:].strip()  # Strip the "//" and leading/trailing spaces
+            comment = line[1:].strip()  # Strip the '#' and leading/trailing spaces
             executed_commands.append({
-                'type': 'card',
+                'type': 'comment',
                 'content': comment
             })
         else:
@@ -59,7 +59,7 @@ def execute_commands(filename):
             command_output = []
             while True:
                 try:
-                    line_output = q.get(timeout=5)  # Timeout to prevent hanging
+                    line_output = q.get(timeout=10)  # Timeout to prevent hanging
                 except queue.Empty:
                     print("Error: Timeout while waiting for command output.", file=sys.stderr)
                     process.terminate()
@@ -131,6 +131,11 @@ def generate_html(commands, output_filename):
             font-family: 'Courier New', monospace;
             font-size: 14px;
             border-radius: 5px;
+            opacity: 0;
+            transition: opacity 1s ease-in-out;
+        }
+        .card.show {
+            opacity: 1;
         }
     </style>
 </head>
@@ -141,8 +146,8 @@ def generate_html(commands, output_filename):
         const commands = {commands_json};
         let currentCommandIndex = 0;
 
-        // Function to simulate typing effect for the command or card content
-        function typeText(text, className = '', delay = 50) {
+        // Function to simulate typing effect for the command or comment
+        function typeText(text, className = '', delay = 50, parentElement = terminal) {
             return new Promise((resolve) => {
                 let index = 0;
                 function type() {
@@ -150,11 +155,15 @@ def generate_html(commands, output_filename):
                         const span = document.createElement('span');
                         span.className = className;
                         // Replace spaces with non-breaking spaces for HTML
-                        span.innerHTML = text[index] === ' ' ? '&nbsp;' : 
-                                         text[index] === '\\t' ? '&nbsp;&nbsp;&nbsp;&nbsp;' : 
-                                         text[index];
-                        terminal.appendChild(span);
-                        terminal.scrollTop = terminal.scrollHeight;  // Auto-scroll
+                        if (text[index] === ' ') {
+                            span.innerHTML = '&nbsp;';
+                        } else if (text[index] === '\\t') {
+                            span.innerHTML = '&nbsp;&nbsp;&nbsp;&nbsp;';
+                        } else {
+                            span.textContent = text[index];
+                        }
+                        parentElement.appendChild(span);
+                        parentElement.scrollTop = parentElement.scrollHeight;  // Auto-scroll
                         index++;
                         setTimeout(type, delay); // Typing speed
                     } else {
@@ -165,21 +174,35 @@ def generate_html(commands, output_filename):
             });
         }
 
+        // Function to create and display comment cards with simulated typing
+        function displayCard(content) {
+            return new Promise((resolve) => {
+                const cardDiv = document.createElement('div');
+                cardDiv.className = 'card';
+                terminal.appendChild(cardDiv);
+                // Trigger CSS transition
+                setTimeout(() => {
+                    cardDiv.classList.add('show');
+                }, 10);
+                terminal.scrollTop = terminal.scrollHeight;  // Auto-scroll
+                // Simulate typing effect within the card
+                typeText(content, '', 20, cardDiv).then(() => {
+                    // Optional: Add a slight delay after card is displayed
+                    setTimeout(resolve, 500);
+                });
+            });
+        }
+
         async function executeNextCommand() {
             if (currentCommandIndex < commands.length) {
                 const command = commands[currentCommandIndex];
 
-                if (command.type === 'card') {
-                    // Render the card and simulate typing the comment inside it
-                    const cardDiv = document.createElement('div');
-                    cardDiv.className = 'card';
-                    terminal.appendChild(cardDiv);  // Append the card first
-                    await typeText(command.content, '', 50);  // Simulate typing for card content
-                    cardDiv.innerHTML = command.content;  // Ensure final content is displayed
-                    terminal.scrollTop = terminal.scrollHeight;  // Auto-scroll
+                if (command.type === 'comment') {
+                    // Render the comment inside a card with simulated typing
+                    await displayCard(command.content);
                     currentCommandIndex++;
-                    setTimeout(executeNextCommand, 1000);  // Delay before next action
-                } else {
+                    setTimeout(executeNextCommand, 500);  // Delay before next action
+                } else if (command.type === 'command') {
                     // Render a terminal command and its output
                     const promptSpan = document.createElement('span');
                     promptSpan.className = 'prompt';
@@ -188,10 +211,10 @@ def generate_html(commands, output_filename):
                     
                     // Type out the command with the typing effect
                     await typeText(command.command + '\\n', '', 80);
-
+    
                     // Introduce a 2-second pause before showing the output
                     await new Promise(resolve => setTimeout(resolve, 2000));
-
+    
                     // Render the command output
                     if (command.output) {
                         const isError = command.output.toLowerCase().includes('error') || command.output.toLowerCase().includes('failed');
@@ -199,12 +222,13 @@ def generate_html(commands, output_filename):
                         if (isError) {
                             outputSpan.className = 'error';
                         }
+                        // Replace spaces and tabs for HTML
                         outputSpan.innerHTML = command.output.replace(/ /g, '&nbsp;').replace(/\\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;') + '<br/>';
                         terminal.appendChild(outputSpan);
                     } else {
                         terminal.innerHTML += '<br/>';
                     }
-
+    
                     terminal.scrollTop = terminal.scrollHeight;  // Auto-scroll to the bottom
                     currentCommandIndex++;
                     setTimeout(executeNextCommand, 500);  // Delay before next action
