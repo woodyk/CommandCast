@@ -14,6 +14,15 @@ import re
 import pexpect
 import sys
 
+# Function to convert hex color codes to RGB tuples
+def hex_to_rgb(hex_color):
+    """Convert a hex color code to an RGB tuple."""
+    hex_color = hex_color.lstrip('#')
+    # Expand shorthand hex codes, e.g., 'fff' to 'ffffff'
+    if len(hex_color) == 3:
+        hex_color = ''.join([c*2 for c in hex_color])
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
 # Terminal configurations (for TikTok/Google Shorts video format)
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
@@ -31,26 +40,6 @@ FONT_COLOR_HEX = "#FFFFFF"  # White color for command and output
 BACKGROUND_COLOR_HEX = "#000000"  # Black terminal background
 PROMPT_COLOR_HEX = "#00FF00"  # Green color for the prompt
 
-# Function to convert hex color codes to RGB tuples
-def hex_to_rgb(hex_color):
-    """Convert a hex color code to an RGB tuple."""
-    hex_color = hex_color.lstrip('#')
-    # Expand shorthand hex codes, e.g., 'fff' to 'ffffff'
-    if len(hex_color) == 3:
-        hex_color = ''.join([c*2 for c in hex_color])
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-
-def get_available_font(font_names):
-    """Return the first available font from the list."""
-    for font_name in font_names:
-        try:
-            font = ImageFont.truetype(font_name, FONT_SIZE)
-            return font_name
-        except IOError:
-            continue
-    print("Error: None of the specified fonts are available.")
-    sys.exit(1)
-
 # Convert hex colors to RGB tuples
 FONT_COLOR = hex_to_rgb(FONT_COLOR_HEX)
 BACKGROUND_COLOR = hex_to_rgb(BACKGROUND_COLOR_HEX)
@@ -60,8 +49,8 @@ PROMPT_COLOR = hex_to_rgb(PROMPT_COLOR_HEX)
 PROMPT_TEXT = "user@localhost$ "  # Default prompt
 
 # Configurable header and footer background colors (using hex codes)
-HEADER_BG_COLOR_HEX = "#000000"  # Dark grey for header
-FOOTER_BG_COLOR_HEX = "#000000"  # Dark grey for footer
+HEADER_BG_COLOR_HEX = "#323232"  # Dark grey for header
+FOOTER_BG_COLOR_HEX = "#323232"  # Dark grey for footer
 
 # Convert header and footer background colors to RGB
 HEADER_BG_COLOR = hex_to_rgb(HEADER_BG_COLOR_HEX)
@@ -83,6 +72,17 @@ FRAME_RATE = 10  # Frames per second for the video
 
 # Font settings
 DEFAULT_FONT_NAMES = ["Courier New", "Courier", "Liberation Mono", "Nimbus Mono L", "FreeMono", "DejaVu Sans Mono"]
+
+def get_available_font(font_names):
+    """Return the first available font from the list."""
+    for font_name in font_names:
+        try:
+            font = ImageFont.truetype(font_name, FONT_SIZE)
+            return font_name
+        except IOError:
+            continue
+    print("Error: None of the specified fonts are available.")
+    sys.exit(1)
 
 FONT_NAME = get_available_font(DEFAULT_FONT_NAMES)
 
@@ -586,12 +586,6 @@ def render_terminal_frames(commands, font_name, frame_idx=0, typing_speed=5, out
                 )
                 # Simulate typing of the line starting at x = 50
                 frame_idx = simulate_typing(draw, img, line, (50, y_position), font, frame_idx, cps)
-
-            # Add a new blank line before rendering the output
-            blank_line_item = {'type': 'line', 'segments': [("", FONT_COLOR)]}
-            img, draw, frame_idx, total_visible_height, y_position = add_item(
-                visible_items, blank_line_item, font, comment_font, img, draw, frame_idx, total_visible_height
-            )
 
             # Generate output delay frames as per the configurable delay
             frame_idx = generate_output_delay_frames(draw, img, frame_idx, output_delay)
